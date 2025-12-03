@@ -1,6 +1,7 @@
 package it.gestione.controller;
 
 import it.gestione.entity.ConfigurazioneSala;
+import it.gestione.entity.Prenotazione;
 import it.gestione.entity.Sala;
 import it.gestione.entity.StatoTavolo;
 import it.gestione.entity.Tavolo;
@@ -310,6 +311,83 @@ public class SalaController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
                     .body("Turno o stato non valido");
+        }
+    }
+
+    // ---------- PRENOTAZIONI <-> GRUPPO DI TAVOLI ---------- //
+
+    /**
+     * Assegna una prenotazione all'intero gruppo di tavoli
+     * a cui appartiene il tavolo (x,y) per quella configurazione (data, turno, sala).
+     *
+     * Usa il service: assegnaPrenotazioneAGruppoERiserva
+     * (oltre ad associare la prenotazione, segna il gruppo come RISERVATO).
+     */
+    @PostMapping("/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}/assegna-prenotazione/{nomePrenotazione}")
+    public ResponseEntity<?> assegnaPrenotazioneAGruppo(
+            @PathVariable String nomeSala,
+            @PathVariable
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate date,
+            @PathVariable String turno,
+            @PathVariable int x,
+            @PathVariable int y,
+            @PathVariable String nomePrenotazione) {
+
+        try {
+            Turno t = Turno.valueOf(turno.toUpperCase());
+            Sala sala = new Sala(nomeSala);
+
+            int res = gestioneSala.assegnaPrenotazioneAGruppoERiserva(
+                    date, t, sala, x, y, nomePrenotazione
+            );
+
+            if (res > 0) {
+                // res = numero di tavoli del gruppo associati
+                return ResponseEntity.ok("Prenotazione assegnata al gruppo. Tavoli associati: " + res);
+            } else if (res == 0) {
+                // nessun tavolo/gruppo trovato
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body("Nessun gruppo trovato alle coordinate specificate");
+            } else { // res == -1
+                // conflitto orario o errore / dati non validi
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body("Impossibile assegnare la prenotazione: conflitto orario o dati non validi");
+            }
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body("Turno non valido");
+        }
+    }
+
+    /**
+     * Restituisce le prenotazioni DISTINTE associate al gruppo di tavoli
+     * a cui appartiene il tavolo (x,y) per quella configurazione (data, turno, sala).
+     */
+    @GetMapping("/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}/prenotazioni-gruppo")
+    public ResponseEntity<?> getPrenotazioniGruppo(
+            @PathVariable String nomeSala,
+            @PathVariable
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate date,
+            @PathVariable String turno,
+            @PathVariable int x,
+            @PathVariable int y) {
+
+        try {
+            Turno t = Turno.valueOf(turno.toUpperCase());
+            Sala sala = new Sala(nomeSala);
+
+            List<Prenotazione> prenotazioni = gestioneSala.getPrenotazioniGruppo(
+                    date, t, sala, x, y
+            );
+
+            return ResponseEntity.ok(prenotazioni);
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body("Turno non valido");
         }
     }
 

@@ -1,10 +1,12 @@
 package it.gestione.service;
 
 import it.gestione.database.ConfigurazioneSalaDAO;
+import it.gestione.database.PrenotazioneTavoloDAO;
 import it.gestione.database.SalaDAO;
 import it.gestione.database.TavoloDAO;
 import it.gestione.database.ZonaSalaDAO;
 import it.gestione.entity.ConfigurazioneSala;
+import it.gestione.entity.Prenotazione;
 import it.gestione.entity.Sala;
 import it.gestione.entity.StatoTavolo;
 import it.gestione.entity.Tavolo;
@@ -13,6 +15,7 @@ import it.gestione.entity.ZonaSala;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.*;
 
 @Service
@@ -23,14 +26,22 @@ public class GestioneSala {
     private final SalaDAO salaDAO;
     private final ZonaSalaDAO zonaSalaDAO;
 
+    // ---------- NUOVI CAMPI PER ASSOCIAZIONE PRENOTAZIONE <-> TAVOLI ---------- //
+    private final PrenotazioneTavoloDAO prenotazioneTavoloDAO;
+    private final GestionePrenotazione gestionePrenotazione;
+
     public GestioneSala(ConfigurazioneSalaDAO configurazioneSalaDAO,
                         TavoloDAO tavoloDAO,
                         SalaDAO salaDAO,
-                        ZonaSalaDAO zonaSalaDAO) {
+                        ZonaSalaDAO zonaSalaDAO,
+                        PrenotazioneTavoloDAO prenotazioneTavoloDAO,
+                        GestionePrenotazione gestionePrenotazione) {
         this.configurazioneSalaDAO = configurazioneSalaDAO;
         this.tavoloDAO = tavoloDAO;
         this.salaDAO = salaDAO;
         this.zonaSalaDAO = zonaSalaDAO;
+        this.prenotazioneTavoloDAO = prenotazioneTavoloDAO;
+        this.gestionePrenotazione = gestionePrenotazione;
     }
 
     // ===================== GESTIONE SALA FISICA (Sala + ZonaSala) ===================== //
@@ -365,6 +376,214 @@ public class GestioneSala {
         return aggiornaStatoGruppo(data, turno, sala, x, y, StatoTavolo.OCCUPATO);
     }
 
+    // ===================== NUOVA PARTE: ASSOCIAZIONE PRENOTAZIONE <-> GRUPPO ===================== //
+
+    /**
+     * Assegna una prenotazione all'intero gruppo di tavoli
+     * a cui appartiene il tavolo (x,y) in una configurazione (data, turno, sala).
+     *
+     * Flusso:
+     *  - verifica parametri
+     *  - recupera la prenotazione (data + nome)
+     *  - recupera tutti i tavoli della configurazione
+     *  - trova il gruppo partendo da (x,y)
+     *  - inserisce in prenotazione_tavolo una riga per ogni tavolo del gruppo
+     *
+     * Ritorna:
+     *   >0 = numero di associazioni inserite
+     *   0  = nessuna associazione (es. tavolo inesistente, gruppo vuoto)
+     *  -1  = errore SQL o parametri non validi
+     */
+    public int assegnaPrenotazioneAGruppo(LocalDate data,
+                                          Turno turno,
+                                          Sala sala,
+                                          int x,
+                                          int y,
+                                          String nomePrenotazione) {
+
+        // validazione base
+        if (data == null || turno == null ||
+                sala == null || sala.getNome() == null || sala.getNome().isBlank() ||
+                nomePrenotazione == null || nomePrenotazione.isBlank()) {
+            return -1;
+        }
+
+        // recupero prenotazione (PK = data + nome, come da PrenotazioneDAO)
+        Prenotazione prenotazione = gestionePrenotazione.getPrenotazione(data, nomePrenotazione);
+        if (prenotazione == null) {
+            // prenotazione non esiste
+            return -1;
+        }
+
+        LocalTime orarioPrenotazione = prenotazione.getOrario();
+        if (orarioPrenotazione == null) {
+            // senza orario non posso applicare il vincolo delle 2 ore
+            return -1;
+        }
+
+        // recupero tutti i tavoli della configurazione
+        List<Tavolo> tavoliConfig = tavoloDAO.getTavoli(data, turno, sala.getNome());
+        if (tavoliConfig.isEmpty()) {
+            return 0;
+        }
+
+        // mappa (x;y) -> Tavolo
+        Map<String, Tavolo> tavoliByKey = new HashMap<>();
+        for (Tavolo t : tavoliConfig) {
+            tavoliByKey.put(key(t.getX(), t.getY()), t);
+        }
+
+        // tavolo di partenza (x,y)
+        Tavolo start = tavoliByKey.get(key(x, y));
+        if (start == null) {
+            // nessun tavolo a quelle coordinate
+            return 0;
+        }
+
+        // trovo tutto il gruppo a cui appartiene (riuso la BFS già presente)
+        List<Tavolo> gruppo = trovaGruppoTavoli(start, tavoliByKey, new HashSet<>());
+        if (gruppo.isEmpty()) {
+            return 0;
+        }
+
+        // 1) controllo vincolo delle 2 ore su TUTTI i tavoli del gruppo
+        final int SOGLIA_ORE = 2;
+        for (Tavolo t : gruppo) {
+            boolean conflitto = prenotazioneTavoloDAO.esisteConflittoOrarioPerTavolo(
+                    data,
+                    turno,
+                    sala.getNome(),
+                    t.getX(),
+                    t.getY(),
+                    orarioPrenotazione,
+                    SOGLIA_ORE
+            );
+
+            if (conflitto) {
+                // c'è già una prenotazione su questo tavolo in +/- 2 ore
+                return -1;
+            }
+        }
+
+        // 2) se nessun conflitto, salvo tutte le associazioni
+        int inserted = 0;
+
+        for (Tavolo t : gruppo) {
+            int res = prenotazioneTavoloDAO.associaTavoloAPrenotazione(
+                    data,
+                    nomePrenotazione,
+                    turno,
+                    sala.getNome(),
+                    t.getX(),
+                    t.getY()
+            );
+
+            if (res == -1) {
+                return -1; // qualche errore SQL
+            }
+            inserted += res; // 0 se già presente, 1 se nuova associazione
+        }
+
+        return inserted;
+    }
+
+
+    /**
+     * Variante comoda: oltre ad assegnare la prenotazione al gruppo,
+     * segna tutto il gruppo come RISERVATO.
+     */
+    public int assegnaPrenotazioneAGruppoERiserva(LocalDate data,
+                                                  Turno turno,
+                                                  Sala sala,
+                                                  int x,
+                                                  int y,
+                                                  String nomePrenotazione) {
+
+        int res = assegnaPrenotazioneAGruppo(data, turno, sala, x, y, nomePrenotazione);
+        if (res <= 0) {
+            return res; // 0 o -1: non tocco lo stato
+        }
+
+        int upd = riservaGruppo(data, turno, sala, x, y);
+        if (upd == -1) {
+            return -1; // errore sugli update
+        }
+
+        return res;
+    }
+
+    /**
+     * Restituisce le prenotazioni DISTINTE associate al gruppo di tavoli
+     * a cui appartiene il tavolo (x,y) in una data configurazione
+     * (data, turno, sala).
+     *
+     * La distintività è sulla PK logica della prenotazione: (data, nome).
+     */
+    public List<Prenotazione> getPrenotazioniGruppo(LocalDate data,
+                                                    Turno turno,
+                                                    Sala sala,
+                                                    int x,
+                                                    int y) {
+
+        List<Prenotazione> risultato = new ArrayList<>();
+
+        if (data == null || turno == null ||
+                sala == null || sala.getNome() == null || sala.getNome().isBlank()) {
+            return risultato;
+        }
+
+        // 1) prendo tutti i tavoli della configurazione (data, turno, sala)
+        List<Tavolo> tavoliConfig = tavoloDAO.getTavoli(data, turno, sala.getNome());
+        if (tavoliConfig.isEmpty()) {
+            return risultato;
+        }
+
+        // 2) mappa (x;y) -> Tavolo
+        Map<String, Tavolo> tavoliByKey = new HashMap<>();
+        for (Tavolo t : tavoliConfig) {
+            tavoliByKey.put(key(t.getX(), t.getY()), t);
+        }
+
+        // 3) tavolo di partenza (x,y)
+        Tavolo start = tavoliByKey.get(key(x, y));
+        if (start == null) {
+            return risultato; // nessun tavolo a quelle coordinate
+        }
+
+        // 4) trovo il gruppo a cui appartiene (x,y)
+        List<Tavolo> gruppo = trovaGruppoTavoli(start, tavoliByKey, new HashSet<>());
+        if (gruppo.isEmpty()) {
+            return risultato;
+        }
+
+        // 5) per evitare duplicati (prenotazione collegata a più tavoli del gruppo)
+        //    uso una mappa pk -> Prenotazione
+        Map<String, Prenotazione> prenByPk = new LinkedHashMap<>();
+
+        for (Tavolo t : gruppo) {
+            List<Prenotazione> prenotazioniTavolo =
+                    prenotazioneTavoloDAO.getPrenotazioniPerTavolo(
+                            data,              // stessa data della configurazione
+                            turno,             // stesso turno
+                            sala.getNome(),    // stessa sala
+                            t.getX(),
+                            t.getY()
+                    );
+
+            for (Prenotazione p : prenotazioniTavolo) {
+                // PK logica: data + nome, come nella tabella prenotazioni
+                String pk = p.getDate() + ";" + p.getNome();
+                prenByPk.putIfAbsent(pk, p);
+            }
+        }
+
+        risultato.addAll(prenByPk.values());
+        return risultato;
+    }
+
+
+
+
     // ===================== helper interni ===================== //
 
     private String key(int x, int y) {
@@ -374,6 +593,9 @@ public class GestioneSala {
     /**
      * BFS per trovare tutti i tavoli nel gruppo del tavolo di partenza.
      * Usa adiacenza 4-direzioni (su/giù/sx/dx).
+     *
+     * Il set visitati è condiviso tra chiamate diverse
+     * quando usato da calcolaPostiPerGruppo, per evitare di rifare gli stessi gruppi.
      */
     private List<Tavolo> trovaGruppoTavoli(Tavolo start,
                                            Map<String, Tavolo> tavoliByKey,
