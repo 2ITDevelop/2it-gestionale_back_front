@@ -1,0 +1,148 @@
+📦 Prenotazioni – /api/prenotazioni
+📌 Endpoints
+Crea prenotazione
+POST /api/prenotazioni
+
+
+Body: Prenotazione
+➡️ Crea una nuova prenotazione (univoca per data + nome).
+
+Lista tutte le prenotazioni
+GET /api/prenotazioni
+
+
+➡️ Restituisce tutte le prenotazioni.
+
+Lista prenotazioni per data
+GET /api/prenotazioni/{date}
+
+
+➡️ Restituisce tutte le prenotazioni per una data (YYYY-MM-DD).
+
+Singola prenotazione
+GET /api/prenotazioni/{date}/{nome}
+
+
+➡️ Ottiene una specifica prenotazione.
+
+Elimina prenotazione
+DELETE /api/prenotazioni/{date}/{nome}
+
+
+➡️ Elimina la prenotazione (data + nome).
+
+🪑 Sala – /api/sala
+▶️ Sale
+Crea sala
+POST /api/sala
+
+
+Body: Sala (+ zone)
+➡️ Crea sala con zone.
+
+Lista sale
+GET /api/sala
+
+Dettaglio sala
+GET /api/sala/{nomeSala}
+
+Aggiorna zone sala
+PUT /api/sala/{nomeSala}/zone
+
+
+Body: Sala con lista zone
+➡️ Sovrascrive tutte le zone della sala.
+
+Elimina sala
+DELETE /api/sala/{nomeSala}
+
+▶️ Configurazioni Sala
+Crea configurazione
+POST /api/sala/configurazioni
+
+
+Body: ConfigurazioneSala
+➡️ Richiede: data, turno, sala.nome
+
+Lista configurazioni
+GET /api/sala/configurazioni
+
+Elimina configurazione
+DELETE /api/sala/configurazioni/{nomeSala}/{date}/{turno}
+
+▶️ Tavoli (CRUD)
+Tavoli della configurazione
+GET /api/sala/tavoli/{nomeSala}/{date}/{turno}
+
+Aggiungi tavolo
+POST /api/sala/tavoli/{nomeSala}/{date}/{turno}
+
+
+Body: Tavolo
+➡️ Aggiunge un tavolo in una configurazione.
+
+Elimina tavolo
+DELETE /api/sala/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}
+
+Aggiorna stato tavolo
+PATCH /api/sala/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}/stato/{stato}
+
+
+➡️ Stato: LIBERO, RISERVATO, OCCUPATO.
+
+▶️ Tavoli – Gruppi
+Aggiorna stato dell’intero gruppo
+PATCH /api/sala/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}/stato-gruppo/{stato}
+
+
+➡️ Cambia stato a tutti i tavoli collegati al tavolo (x,y).
+
+▶️ Prenotazioni ↔ Gruppo di tavoli
+Assegna prenotazione al gruppo
+POST /api/sala/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}/assegna-prenotazione/{nomePrenotazione}
+
+
+➡️ Assegna la prenotazione all’intero gruppo + setta il gruppo a RISERVATO.
+➡️ Fallisce (409) se c’è conflitto orario ±2h.
+
+Prenotazioni del gruppo
+GET /api/sala/tavoli/{nomeSala}/{date}/{turno}/{x}/{y}/prenotazioni-gruppo
+
+
+➡️ Restituisce prenotazioni DISTINTE collegate al gruppo di quel tavolo.
+
+▶️ Posti
+Posti per gruppo
+GET /api/sala/posti/{nomeSala}/{date}/{turno}/gruppi
+
+Posti totali
+GET /api/sala/posti/{nomeSala}/{date}/{turno}/totale
+
+🕒 Working Days – /api/working-days
+📌 Endpoints
+Crea working day
+POST /api/working-days
+
+
+Body: WorkingDay
+➡️ Crea orari di apertura/chiusura (template o special).
+
+Lista working days
+GET /api/working-days
+
+Per tipo
+GET /api/working-days/type/{type}
+
+
+➡️ type = WEEKDAY, SATURDAY, SUNDAY, SPECIAL
+
+Elimina template
+DELETE /api/working-days/template/{type}
+
+Elimina special
+DELETE /api/working-days/special/{type}/{date}
+
+
+
+
+
